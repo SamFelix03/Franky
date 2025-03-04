@@ -1,8 +1,7 @@
 # FRANKY - Custom AI Agent Creator
 
-FRANKY is a Next.js application that allows users to create custom AI agents with DeFi tools integration, powered by the 1inch protocol.
+FRANKY is an application that allows users to create custom AI agents with DeFi tools integration.
 
-![FRANKY Screenshot](https://via.placeholder.com/800x400?text=FRANKY+AI+Agent+Creator)
 
 ## Features
 
@@ -102,19 +101,7 @@ franky/
 └── public/                   # Static assets
 ```
 
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgements
-
-- [1inch Protocol](https://1inch.io/) for DeFi integration
-- [Next.js](https://nextjs.org/) for the React framework
-- [Tailwind CSS](https://tailwindcss.com/) for styling
-- [Framer Motion](https://www.framer.com/motion/) for animations
-- [DND Kit](https://dndkit.com/) for drag-and-drop functionality
-- [WalletConnect](https://walletconnect.com/) for Web3 authentication
