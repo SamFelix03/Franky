@@ -4,6 +4,7 @@ import requests
 from typing import Dict, Any
 from dotenv import load_dotenv, set_key
 from src.connections.base_connection import BaseConnection, Action, ActionParameter
+import json
 
 logger = logging.getLogger("connections.api_tools_connection")
 
@@ -34,6 +35,14 @@ class APIToolsConnection(BaseConnection):
                     ActionParameter("chain_id", True, str, "Chain ID (e.g., 1 for Ethereum, 56 for BSC)")
                 ],
                 description="Get current gas price for a specific blockchain network"
+            ),
+            "get-transaction-history": Action(
+                name="get-transaction-history",
+                parameters=[
+                    ActionParameter("wallet_address", True, str, "Wallet address to fetch transactions for"),
+                    ActionParameter("chain_id", True, str, "Chain ID (e.g., 1 for Ethereum, 56 for BSC)")
+                ],
+                description="Get transaction history for a specific wallet address"
             )
         }
 
@@ -95,9 +104,56 @@ class APIToolsConnection(BaseConnection):
             logger.error(error_msg)
             return {"error": error_msg}
 
+    def get_transaction_history(self, wallet_address: str, chain_id: str, **kwargs) -> Dict[str, Any]:
+        """Get transaction history for a specific wallet address"""
+        try:
+            api_url = f"https://api.1inch.dev/history/v2.0/history/{wallet_address}/events"
+            
+            headers = {
+                "Authorization": f"Bearer {self.api_key}"
+            }
+            
+            params = {
+                "chainId": chain_id,
+                "limit": "1"  # Limit to 1 transaction
+            }
+            
+            # Log request details
+            logger.info("\n📡 Transaction History API Request:")
+            logger.info(f"URL: {api_url}")
+            logger.info("Headers: Authorization: Bearer ***[API_KEY_HIDDEN]***")
+            logger.info(f"Parameters: {params}")
+            
+            response = requests.get(api_url, headers=headers, params=params)
+            
+            # Log response details
+            logger.info("\n📥 API Response Details:")
+            logger.info(f"Status Code: {response.status_code}")
+            logger.info(f"Response Headers: {dict(response.headers)}")
+            
+            if response.status_code != 200:
+                error_msg = f"Transaction history request failed: {response.status_code} - {response.text}"
+                logger.error(error_msg)
+                return {"error": error_msg}
+            
+            # Log the raw response data
+            logger.info("\n📦 Raw Response Data:")
+            response_data = response.json()
+            logger.info(json.dumps(response_data, indent=2))
+            logger.info("\n" + "-" * 80 + "\n")
+            
+            return response_data
+            
+        except Exception as e:
+            error_msg = f"Error getting transaction history: {str(e)}"
+            logger.error(error_msg)
+            return {"error": error_msg}
+
     def perform_action(self, action_name: str, kwargs) -> Any:
         """Perform a registered action with the given parameters"""
         if action_name == "get-gas-price":
             return self.get_gas_price(**kwargs)
+        elif action_name == "get-transaction-history":
+            return self.get_transaction_history(**kwargs)
         else:
             raise ValueError(f"Unknown action: {action_name}") 

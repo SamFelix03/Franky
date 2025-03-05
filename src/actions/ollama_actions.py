@@ -1,7 +1,7 @@
 import logging
 from src.action_handler import register_action
 from src.helpers import print_h_bar
-from src.actions.api_tools_actions import detect_gas_price_query
+from src.actions.api_tools_actions import detect_gas_price_query, detect_transaction_history_query
 
 logger = logging.getLogger("actions.ollama_actions")
 
@@ -35,6 +35,7 @@ Your name is {agent.name} and you should sign your responses as {agent.name} if 
 
 You have access to special tools that can provide real-time information. When a user asks about:
 1. Gas prices or transaction fees on blockchain networks - I will fetch the current gas prices for you.
+2. Transaction history for a specific wallet address - I will fetch the transaction history for you.
 
 Only use these tools when directly relevant to the user's query.
 """
@@ -59,6 +60,9 @@ Only use these tools when directly relevant to the user's query.
         # Check if this is a gas price query
         network = detect_gas_price_query(user_input)
         
+        # Check if this is a transaction history query
+        wallet_address, tx_network = detect_transaction_history_query(user_input)
+        
         if network and "api_tools" in agent.connection_manager.connections:
             # This is a gas price query and we have the API tools connection
             try:
@@ -76,7 +80,6 @@ Only use these tools when directly relevant to the user's query.
                     # Handle the nested dictionary format from 1inch API
                     if "low" in gas_result:
                         if isinstance(gas_result['low'], dict):
-                            # Format the nested dictionary values
                             low_details = []
                             for key, value in gas_result['low'].items():
                                 low_details.append(f"{key}: {value}")
@@ -152,6 +155,104 @@ If you're unsure how to format the response, use this template:
             except Exception as e:
                 logger.error(f"\n❌ Error using gas price tool: {e}")
         
+        elif wallet_address and "api_tools" in agent.connection_manager.connections:
+            # This is a transaction history query and we have the API tools connection
+            try:
+                # Execute the transaction history action
+                from src.action_handler import execute_action
+                tx_result = execute_action(agent, "get-transaction-history", wallet_address=wallet_address, network=tx_network)
+                
+                if tx_result and not isinstance(tx_result, bool):
+                    # Log the raw API response
+                    logger.info("\n📥 Raw API Response Data:")
+                    import json
+                    logger.info(json.dumps(tx_result, indent=2))
+                    logger.info("\n" + "-" * 80 + "\n")
+                    
+                    # Format the transaction history information in a structured way
+                    tx_info = []
+                    
+                    if "items" in tx_result:
+                        for item in tx_result["items"]:
+                            tx_details = item.get("details", {})
+                            token_actions = tx_details.get("tokenActions", [])
+                            
+                            # Format each transaction
+                            tx = {
+                                "hash": tx_details.get("txHash", ""),
+                                "type": tx_details.get("type", ""),
+                                "status": tx_details.get("status", ""),
+                                "timestamp": item.get("timeMs", 0),
+                                "block": tx_details.get("blockNumber", ""),
+                                "from": tx_details.get("fromAddress", ""),
+                                "to": tx_details.get("toAddress", ""),
+                                "fee_wei": tx_details.get("feeInWei", ""),
+                                "eth_usd_price": tx_details.get("nativeTokenPriceToUsd", 0),
+                            }
+                            
+                            # Add token transfer details if any
+                            if token_actions:
+                                action = token_actions[0]  # Get first token action
+                                tx.update({
+                                    "token_type": action.get("standard", ""),
+                                    "token_address": action.get("address", ""),
+                                    "amount": action.get("amount", ""),
+                                    "direction": action.get("direction", ""),
+                                    "token_usd_price": action.get("priceToUsd", 0)
+                                })
+                            
+                            tx_info.append(tx)
+                    
+                    # Create a clear template response with real data
+                    template_response = f"Here are the recent transactions for wallet {wallet_address} on {tx_network.capitalize()}:\n\n"
+                    
+                    for idx, tx in enumerate(tx_info, 1):
+                        template_response += f"Transaction #{idx}:\n"
+                        template_response += f"- Type: {tx['type']}\n"
+                        template_response += f"- Status: {tx['status']}\n"
+                        template_response += f"- Hash: {tx['hash']}\n"
+                        template_response += f"- From: {tx['from']}\n"
+                        template_response += f"- To: {tx['to']}\n"
+                        
+                        if tx['token_type'] == 'Native':
+                            amount_eth = float(tx['amount']) / 1e18  # Convert Wei to ETH
+                            usd_value = amount_eth * tx['eth_usd_price']
+                            template_response += f"- Amount: {amount_eth:.6f} ETH (${usd_value:.2f})\n"
+                        else:
+                            template_response += f"- Token: {tx['token_type']} ({tx['token_address']})\n"
+                            template_response += f"- Amount: {tx['amount']}\n"
+                            if tx['token_usd_price']:
+                                usd_value = float(tx['amount']) * tx['token_usd_price']
+                                template_response += f"- USD Value: ${usd_value:.2f}\n"
+                        
+                        fee_eth = float(tx['fee_wei']) / 1e18  # Convert Wei to ETH
+                        fee_usd = fee_eth * tx['eth_usd_price']
+                        template_response += f"- Gas Fee: {fee_eth:.6f} ETH (${fee_usd:.2f})\n\n"
+                    
+                    # Modify the user's query to include the transaction history
+                    modified_user_input = f"{user_input}\n\nHere is the EXACT transaction data from the blockchain:\n\n{template_response}\n\nAnalyze these REAL transactions. DO NOT make up or modify any values. Use the EXACT amounts, types, and timestamps shown above."
+                    
+                    # Replace the last user message with the modified one
+                    chat_history[-1]["content"] = modified_user_input
+                    
+                    # Add a strong instruction as a system message
+                    chat_history.append({
+                        "role": "system", 
+                        "content": f"""CRITICAL INSTRUCTION: The user has asked about transaction history for {wallet_address} on {tx_network.capitalize()}.
+I have fetched the real blockchain data above. Your response MUST:
+1. Use ONLY the real transaction data shown - DO NOT make up or modify any values
+2. Include specific transaction hashes, amounts, and types from the data
+3. Calculate total value moved ONLY using the exact amounts shown
+4. Mention specific timestamps and USD values from the data
+5. If you describe patterns, use ONLY patterns visible in this exact data
+
+If you're unsure how to format the response, use this template:
+{template_response}
+"""
+                    })
+            except Exception as e:
+                logger.error(f"\n❌ Error using transaction history tool: {e}")
+        
         # Get response from Ollama
         response = agent.connection_manager.perform_action(
             connection_name="ollama",
@@ -179,6 +280,28 @@ If you're unsure how to format the response, use this template:
                     
                     # Create a corrected response that includes the agent's style but with the correct data
                     corrected_response = f"{response}\n\nActually, let me correct myself with the exact data:\n\n{template_response}"
+                    
+                    # Update the response
+                    response = corrected_response
+            
+            # Check if this was a transaction history query and if the response contains the transaction data
+            elif wallet_address and "api_tools" in agent.connection_manager.connections:
+                # Check if the response contains transaction data
+                contains_tx_data = False
+                
+                # Look for key indicators that the model used the transaction data
+                if wallet_address in response:
+                    contains_tx_data = True
+                
+                if "events" in tx_result and any(str(event) in response for event in tx_result["events"]):
+                    contains_tx_data = True
+                
+                # If the model didn't use the transaction data, append a correction
+                if not contains_tx_data and 'template_response' in locals():
+                    logger.info("\n⚠️ Model didn't use transaction data. Adding correction...")
+                    
+                    # Create a corrected response that includes the agent's style but with the correct data
+                    corrected_response = f"{response}\n\nActually, let me provide you with the exact transaction data:\n\n{template_response}"
                     
                     # Update the response
                     response = corrected_response
